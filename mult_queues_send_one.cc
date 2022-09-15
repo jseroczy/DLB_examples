@@ -36,7 +36,7 @@ enum wait_mode_t {
 } wait_mode = INTERRUPT;
 
 DLB_device dlb_dev;
-dlb_port_hdl_t rx_port_g; //JSJS delete
+
 static void *rx_traffic(void *__args)
 {
     thread_args_t *args = (thread_args_t *) __args;
@@ -132,7 +132,7 @@ int main(int argc, char **argv)
 		tx_args[i].port = dlb_queue.add_port();
 
 	/* rx port creation */
-	rx_port_g = rx_args.port = dlb_queue.add_port();
+	rx_args.port = dlb_queue.add_port();
 
 	dlb_dev.start_sched();
 
