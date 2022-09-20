@@ -1,0 +1,182 @@
+/*
+*
+*	multiple queues writings from one tx port
+* 	queues type: direct
+*	one domain for every queue and port
+*
+*	author: jseroczy(serek90)
+*/
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <error.h>
+#include <pthread.h>
+#include <getopt.h>
+#include <unistd.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include "dlb.h"
+#include "ats_dlb_queue.h"
+
+#define RX_TH_NUM 8
+#define RETRY_LIMIT 1000000000
+#define TX_TH_EV 1
+typedef struct {
+    dlb_port_hdl_t port;
+    int queue_id;
+    int efd;
+    int th_num;
+    int queue_ids[RX_TH_NUM]; //for tx list of whole queue ids
+} thread_args_t;
+
+enum wait_mode_t {
+    POLL,
+    INTERRUPT,
+} wait_mode = INTERRUPT;
+
+DLB_device dlb_dev;
+
+static void *rx_traffic(void *__args)
+{
+    thread_args_t *args = (thread_args_t *) __args;
+    dlb_event_t events[40];
+    printf("Hi from rx thread\n");
+
+    int num = 0;
+    int ret = 0;
+    dlb_queue_depth_levels_t lvl;
+    for(;;)
+    {
+	ret = dlb_recv(args->port,
+                           40,
+                           (wait_mode == POLL),
+                           &events[0]);
+        if (ret == -1)
+        {
+            printf("Problem with reciving events");
+            break;
+        }
+
+	printf("Received:  %d \t %d\n", args->th_num, ret);
+        printf("Printing received events\n");
+        for(int i = 0; i < ret; i++)
+        {
+            printf("\tthread num: %d\t", args->th_num);
+            printf("data: %ld\n\n", events[i].adv_send.udata64);
+        }
+	sleep(7);
+
+    }
+
+    return NULL;
+}
+
+static void *tx_traffic(void *__args)
+{
+    thread_args_t *args = (thread_args_t *) __args;
+    dlb_event_t events[TX_TH_EV * RX_TH_NUM];
+    static int cntr = 0;
+
+    printf("Hi from tx thread\n");
+
+    /* Initialize the static fields in the send events */
+    for (int i = 0; i < TX_TH_EV * RX_TH_NUM; i++) {
+        events[i].send.flow_id = 0;
+        events[i].send.queue_id = args->queue_ids[i/TX_TH_EV];
+        events[i].send.sched_type = SCHED_DIRECTED;
+        events[i].send.priority = 0;
+    }
+
+    /* Send the events */
+    int ret = 0;
+    int num = 0;
+    dlb_queue_depth_levels_t lvl;
+    for(;;)
+    {
+	for(int i = 0 ; i < TX_TH_EV * RX_TH_NUM; i++)
+	{
+        	events[i].adv_send.udata64 = cntr++;
+        	events[i].adv_send.udata16 = args->th_num;
+
+        	ret = dlb_send(args->port, 1, &events[i]);
+
+		if (ret == -1)
+        	{
+            		printf("thread %d problem with packet port = %p\n", args->th_num, args->port);
+            		break;
+        	}
+		printf("%d \t", cntr);
+        	//printf("Thread: %d Send %d \t cap: %d\n", args->th_num, ret, dlb_adv_read_queue_depth_counter(dlb_dev.get_domain(), args->queue_id, true, lvl));
+	}
+	printf("\n");
+	sleep(3);
+
+    }
+
+    return NULL;
+}
+
+int main(int argc, char **argv)
+{
+	pthread_t rx_thread[RX_TH_NUM], tx_thread;
+	thread_args_t rx_args[RX_TH_NUM], tx_args;
+	int rx_port_id[RX_TH_NUM], tx_port_id;
+
+	/* queque creation */
+	printf("Create queque\n");
+	DLB_queue dlb_queue[RX_TH_NUM];
+	for(int i = 0; i < RX_TH_NUM; i++)
+		dlb_queue[i] =
+			DLB_queue(4, dlb_dev.get_domain(), dlb_dev.get_ldb_pool_id(), dlb_dev.get_dir_pool_id(), dlb_dev.get_cap());
+
+	for(int i = 0; i < RX_TH_NUM; i++)
+		tx_args.queue_ids[i] = rx_args[i].queue_id = dlb_queue[i].get_queue_id();
+
+	/* TX ports creation */
+	printf("Port tx creation\n");
+	tx_args.port = dlb_queue[0].add_port(false);
+
+	/* rx port creation */
+	for(int i = 0; i < RX_TH_NUM; i++)
+		rx_args[i].port = dlb_queue[i].add_port(true);
+
+	dlb_dev.start_sched();
+
+/************************************************
+* Thread preparation
+************************************************/
+
+	/* thread creation */
+    	printf("Creating tx and rx threads\n");
+    	for(int i = 0; i < RX_TH_NUM; i++)
+   	{
+        	rx_args[i].th_num = i;
+    		pthread_create(&rx_thread[i], NULL, rx_traffic, &rx_args[i]);
+    	}
+
+	/* Add sleep here to make sure the rx_thread is staretd before tx_thread */
+	usleep(1000);
+	pthread_create(&tx_thread, NULL, tx_traffic, &tx_args);
+
+    	/* Wait for threads to complete */
+   	for(int i = 0; i < RX_TH_NUM; i++)
+    		pthread_join(rx_thread[i], NULL);
+    	pthread_join(tx_thread, NULL);
+
+
+/********************************************
+* Clean dlb device
+*********************************************/
+
+    if (dlb_detach_port(tx_args.port) == -1)
+        error(1, errno, "dlb_detach_port");
+
+    for(int i = 0; i < RX_TH_NUM; i++)
+    {
+        if (dlb_detach_port(rx_args[i].port) == -1)
+            error(1, errno, "dlb_detach_port");
+    }
+
+    return 0;
+}

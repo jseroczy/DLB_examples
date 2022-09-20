@@ -18,7 +18,7 @@ DLB_queue::~DLB_queue()
         //error(1, errno, "dlb_detach_port");
 }
 
-dlb_port_hdl_t DLB_queue::add_port()
+dlb_port_hdl_t DLB_queue::add_port(bool is_queue_only = true)
 {
 	printf("Adding new port to queue\n");
 
@@ -35,7 +35,11 @@ dlb_port_hdl_t DLB_queue::add_port()
 	args.cq_depth = CQ_DEPTH;
 
 	/* Create port */
-	int port_id = dlb_create_dir_port(domain, &args, queue_id);
+	int port_id;
+	if(is_queue_only)
+		port_id = dlb_create_dir_port(domain, &args, queue_id);
+	else
+		port_id = dlb_create_dir_port(domain, &args, -1); // for most use cases tx port
 	if (port_id == -1)
 		error(1, errno, "dlb_create_dir_port");
 

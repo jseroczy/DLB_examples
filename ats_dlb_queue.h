@@ -19,8 +19,9 @@ class DLB_queue
 public:
 	int get_queue_id() { return queue_id; }
 	void print_ports();
-	dlb_port_hdl_t add_port();
+	dlb_port_hdl_t add_port(bool);
 	DLB_queue(int, dlb_domain_hdl_t, int, int, dlb_dev_cap_t);
+	DLB_queue() {}
 	~DLB_queue();
 };
 
