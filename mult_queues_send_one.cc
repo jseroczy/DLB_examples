@@ -1,3 +1,13 @@
+/*
+*
+*       one queue multiple tx and one rx read
+*       queues type: direct
+*       only one scheduler domain
+*
+*       author: jseroczy(serek90)
+*/
+
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -11,7 +21,6 @@
 #include "ats_dlb_queue.h"
 
 #define TX_TH_NUM 4
-#define NUM_EVENTS_PER_LOOP 40
 #define RETRY_LIMIT 1000000000
 
 typedef struct {
@@ -27,7 +36,7 @@ enum wait_mode_t {
 } wait_mode = INTERRUPT;
 
 DLB_device dlb_dev;
-dlb_port_hdl_t rx_port_g; //JSJS delete
+
 static void *rx_traffic(void *__args)
 {
     thread_args_t *args = (thread_args_t *) __args;
@@ -60,14 +69,6 @@ static void *rx_traffic(void *__args)
 
     }
 
-    /* print received events */
-    sleep(1);
-    printf("Printing received events\n");
-    for(int i = 0; i < NUM_EVENTS_PER_LOOP * TX_TH_NUM; i++)
-    {
-	printf("thread num: %d\t", events[i].adv_send.udata16);
-	printf("data: %ld\n", events[i].adv_send.udata64);
-    }
     return NULL;
 }
 
@@ -105,25 +106,7 @@ static void *tx_traffic(void *__args)
         }
 	printf("%d \t", cntr);
         printf("Thread: %d Send %d \t cap: %d\n", args->th_num, ret, dlb_adv_read_queue_depth_counter(dlb_dev.get_domain(), args->queue_id, true, lvl));
-
-	/* checking */
-	dlb_event_t events_rx;
-         ret = dlb_recv_no_pop(rx_port_g,
-                            1,
-                            (wait_mode == POLL),
-                            &events_rx);
-        if (ret == -1)
-        {
-              printf("Problem with reciving events\n");
-        }
-	else if(ret == 0)
-	{
-		printf("No event\n");
-	}
-
-
 	sleep(1);
-
     }
 
     return NULL;
@@ -149,7 +132,7 @@ int main(int argc, char **argv)
 		tx_args[i].port = dlb_queue.add_port();
 
 	/* rx port creation */
-	rx_port_g = rx_args.port = dlb_queue.add_port();
+	rx_args.port = dlb_queue.add_port();
 
 	dlb_dev.start_sched();
 
